@@ -9,6 +9,7 @@ from scipy.signal import butter
 from scipy.signal import sosfiltfilt
 from scipy.signal import welch
 import pandas as pd
+import matplotlib.pyplot as plt
 
 from scipy.spatial.distance import euclidean
 import numpy as np
@@ -41,7 +42,7 @@ def emg_envelope(emg_rectified, stimulus, repetition, window_size = 25, n_channe
 #create a function that analysis each stimuli individually and returns repetition index of an trial where the signal is significantly diffrent from other trials 
 #first approach see how differnet the mean signal is 
 
-def emg_average_activations(emg_envelopes, n_channels = 10, n_stimuli = 12, n_repetitions = 10):
+def compute_emg_average_activations(emg_envelopes, n_channels = 10, n_stimuli = 12, n_repetitions = 10):
     emg_average_activations = np.zeros((n_channels, n_stimuli, n_repetitions))
     for stimuli_idx in range(n_stimuli):
         for repetition_idx in range(n_repetitions):
@@ -98,7 +99,7 @@ def trial_to_exclude(emg_average_activations, stimuli_idx, threshold_factor=1.5,
     return trials_to_exclude
 
 
-def trial_to_exclude_all(emg_average_activations, threshold_factor=1.5, use_iqr=True):
+def trial_to_exclude_all(emg_average_activations, threshold_factor=1.5, use_iqr=True, print_list = False):
     """
     Apply the exclusion method (IQR or MAD) to all stimuli.
 
@@ -116,7 +117,8 @@ def trial_to_exclude_all(emg_average_activations, threshold_factor=1.5, use_iqr=
     for stimuli_idx in range(n_stimuli):
         trials_to_exclude = trial_to_exclude(emg_average_activations, stimuli_idx, threshold_factor, use_iqr)
         exclude_list.append(trials_to_exclude)
-        print(f"Trials to exclude for Stimulus {stimuli_idx + 1}: {trials_to_exclude + 1}")  # 1-based indexing
+        if print_list:
+            print(f"Trials to exclude for Stimulus {stimuli_idx + 1}: {trials_to_exclude + 1}")  # 1-based indexing
 
     return exclude_list
 
@@ -278,3 +280,70 @@ def plot_features_by_stimulus_and_metric(dataset, labels, n_stimuli, n_repetitio
 
         plt.suptitle(f"Features for Stimulus {stimuli_idx + 1}", fontsize=16)
         plt.show()
+
+def plot_feature_subjects(dataset, labels, subject_ids, n_stimuli, n_channels, feature_names):
+    """
+    Plot the mean feature value per channel for each stimulus, comparing different subjects.
+    The plots will be arranged in columns of 3.
+    
+    Args:
+        dataset: 2D numpy array (n_samples, n_features * n_channels).
+        labels: 1D numpy array of stimulus labels corresponding to each trial.
+        subject_ids: 1D numpy array of subject IDs corresponding to each trial.
+        n_stimuli: Number of unique stimuli.
+        n_channels: Number of EMG channels.
+        feature_names: List of feature names corresponding to the features in the dataset.
+    """
+    n_features = dataset.shape[1] // n_channels  # Number of features per channel
+
+    # Reshape dataset to (n_samples, n_features, n_channels)
+    reshaped_dataset = dataset.reshape(-1, n_features, n_channels)
+
+    # Iterate through each stimulus
+    for stimuli_idx in range(n_stimuli):
+        # Select data for the current stimulus
+        stimulus_trials = np.where(labels == stimuli_idx + 1)[0]
+        stimulus_data = reshaped_dataset[stimulus_trials]
+        stimulus_subjects = subject_ids[stimulus_trials]
+
+        # Create a subplot grid (with 3 columns)
+        n_rows = (n_features + 2) // 3  # Calculate number of rows needed for 3 columns
+        fig, axes = plt.subplots(n_rows, 3, figsize=(15, n_rows * 5), sharex=True, constrained_layout=True)
+        axes = axes.flatten()  # Flatten the axes array to make indexing easier
+
+        # Iterate through each feature
+        for feature_idx, feature_name in enumerate(feature_names):
+            ax = axes[feature_idx]
+
+            # Calculate the mean per channel for each subject
+            for subject_id in np.unique(subject_ids):
+                # Select data for the current subject
+                subject_trials = np.where(stimulus_subjects == subject_id)[0]
+                if len(subject_trials) > 0:
+                    subject_data = stimulus_data[subject_trials, feature_idx, :]
+                    mean_per_channel = np.mean(subject_data, axis=0)
+
+                    # Plot the subject's mean feature value per channel
+                    ax.plot(
+                        range(1, n_channels + 1),  # Channel indices
+                        mean_per_channel,
+                        label=f"Subject {subject_id}",
+                        alpha=0.7,
+                    )
+
+            # Configure the plot
+            ax.set_title(f"{feature_name} (Stimulus {stimuli_idx + 1})")
+            ax.set_xlabel("Channel")
+            ax.set_ylabel("Mean Feature Value")
+            ax.set_xticks(range(1, n_channels + 1))
+            ax.legend(loc="upper right", fontsize=8)
+            ax.grid(alpha=0.3)
+
+        # Hide unused axes if the number of features isn't a multiple of 3
+        for idx in range(n_features, len(axes)):
+            fig.delaxes(axes[idx])
+
+        # Show the plot
+        plt.tight_layout()
+        plt.show()
+
