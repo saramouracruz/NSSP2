@@ -52,7 +52,7 @@ def compute_emg_average_activations(emg_envelopes, n_channels = 10, n_stimuli = 
 
 
 
-def trial_to_exclude(emg_average_activations, stimuli_idx, threshold_factor=1.5, use_iqr=True):
+def trial_to_exclude_outdated(emg_average_activations, stimuli_idx, threshold_factor=1.5, use_iqr=True):
     """
     Identify trials where the channel distribution deviates significantly from others,
     using either IQR or MAD for outlier detection.
@@ -97,9 +97,7 @@ def trial_to_exclude(emg_average_activations, stimuli_idx, threshold_factor=1.5,
         trials_to_exclude = np.where(distances > threshold)[0]
 
     return trials_to_exclude
-
-
-def trial_to_exclude_all(emg_average_activations, threshold_factor=1.5, use_iqr=True, print_list = False):
+def trial_to_exclude_all_oudated(emg_average_activations, print_list = True):
     """
     Apply the exclusion method (IQR or MAD) to all stimuli.
 
@@ -115,12 +113,100 @@ def trial_to_exclude_all(emg_average_activations, threshold_factor=1.5, use_iqr=
     exclude_list = []
 
     for stimuli_idx in range(n_stimuli):
-        trials_to_exclude = trial_to_exclude(emg_average_activations, stimuli_idx, threshold_factor, use_iqr)
+        trials_to_exclude = trial_to_exclude(emg_average_activations, stimuli_idx, fs = 100)
         exclude_list.append(trials_to_exclude)
         if print_list:
             print(f"Trials to exclude for Stimulus {stimuli_idx + 1}: {trials_to_exclude + 1}")  # 1-based indexing
 
     return exclude_list
+
+
+
+
+def trial_to_exclude(emg_envelopes, stimuli_idx, fs, window_ms=2000, n_repetitions = 10):
+    """
+    Identify trials where any channel's signal is constant or contains zeros
+    over a specified time window in `emg_envelopes`.
+
+    Args:
+        emg_envelopes (list): Nested list of envelopes [stimuli_idx][repetition_idx].
+                              Each entry is a 2D array (n_samples x n_channels).
+        stimuli_idx (int): Index of the stimulus to analyze (0-based).
+        fs (int): Sampling frequency of the EMG signal in Hz.
+        window_ms (int): Duration of the window in milliseconds (default: 20 ms).
+
+    Returns:
+        list: Indices of trials to exclude for the specified stimulus.
+    """
+    # Calculate the number of samples in the specified time window
+    window_size = int(fs * (window_ms / 1000))
+
+    # Get the list of repetitions for the given stimulus
+    repetitions = emg_envelopes[stimuli_idx]
+
+    # List to store indices of trials to exclude
+    trials_to_exclude = []
+
+    # Iterate through all repetitions for the given stimulus
+    for repetition_idx in range(n_repetitions):
+        n_samples, n_channels = emg_envelopes[stimuli_idx][repetition_idx].shape
+
+        # Check for each channel
+        for channel_idx in range(n_channels):
+            channel_signal = emg_envelopes[stimuli_idx][repetition_idx][:, channel_idx]
+
+            # Check for zeros
+            if np.all(channel_signal == 0):
+                trials_to_exclude.append(repetition_idx)
+                print('all channel is 0')
+                break  # No need to check other conditions for this trial
+
+            # Check for constant values within a sliding window
+            for start in range(0, n_samples - window_size + 1):
+                window = channel_signal[start:start + window_size]
+                if np.all(window == window[0]):  # All values in the window are identical
+                    trials_to_exclude.append(repetition_idx)
+                    print(f'all values in the window are identical for channel {channel_idx+1}')
+                    break
+            else:
+                continue
+            break
+
+    # Remove duplicates and return sorted list of trials
+    return sorted(set(trials_to_exclude))
+
+def trial_to_exclude_all(emg_envelopes, fs = 100, window_ms=2000, print_list=True):
+    """
+    Identify trials to exclude for all stimuli based on the `trial_to_exclude` method.
+
+    Args:
+        emg_envelopes (list): Nested list of envelopes [stimuli_idx][repetition_idx].
+                              Each entry is a 2D array (n_samples x n_channels).
+        fs (int): Sampling frequency of the EMG signal in Hz.
+        window_ms (int): Duration of the window in milliseconds (default: 20 ms).
+        print_list (bool): Whether to print excluded trials for each stimulus.
+
+    Returns:
+        list: A list where each element contains the indices of excluded trials for each stimulus.
+    """
+    n_stimuli = len(emg_envelopes)  # Number of stimuli
+    exclude_list = []
+
+    for stimuli_idx in range(n_stimuli):
+        # Use trial_to_exclude for each stimulus
+        trials_to_exclude = trial_to_exclude(emg_envelopes, stimuli_idx, fs, window_ms)
+        exclude_list.append(trials_to_exclude)
+
+        if print_list:
+            # Print the excluded trials (1-based indexing)
+            trials_one_based = [trial + 1 for trial in trials_to_exclude]
+            print(f"Trials to exclude for Stimulus {stimuli_idx + 1}: {trials_one_based}")
+
+    return exclude_list
+
+
+
+
 
 def plot_heatmap(emg_average_activations, n_stimuli = 12):
     fig, ax = plt.subplots(6,2, figsize=(30, 25), constrained_layout=True, sharex=True, sharey=True)
@@ -346,4 +432,13 @@ def plot_feature_subjects(dataset, labels, subject_ids, n_stimuli, n_channels, f
         # Show the plot
         plt.tight_layout()
         plt.show()
+
+# plot Envelopes of the EMG signal
+def plot_envelopes(emg_envelopes, stimuli_index, repetition_index, number_of_emg_channels = 10):
+    fig, ax = plt.subplots(2, 5, figsize=(12, 6), constrained_layout=True, sharex=True, sharey=True)
+    ax = ax.ravel()
+    for channel_idx in range(number_of_emg_channels): 
+        ax[channel_idx].plot(emg_envelopes[stimuli_index][repetition_index][:, channel_idx]) #here if you change the indexes of emg_envelop you can go over the signal for a specific repetition and stimuli 
+        ax[channel_idx].set_title(f"Channel {channel_idx+1}")
+    plt.suptitle("Envelopes of the EMG signal")
 
