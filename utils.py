@@ -18,6 +18,11 @@ np.random.seed(42)
 
 import plotly.express as px
 
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import GridSearchCV
 
 def emg_envelope(emg_rectified, stimulus, repetition, window_size = 25, n_channels = 10, n_stimuli = 12, n_repetitions = 10):
 
@@ -218,40 +223,40 @@ def plot_heatmap(emg_average_activations, n_stimuli = 12):
         ax[stimuli_idx].set_xlabel("Repetition")
         ax[stimuli_idx].set_ylabel("EMG channel")
 
-
-def mean_absolute_value(trial):
+# features
+def mav(trial):
     """Mean absolute value (MAV)."""
     return np.mean(np.abs(trial), axis=0)
 
-def root_mean_square(trial):
+def std(trial):
+    """Standard deviation (STD)."""
+    return np.std(trial, axis=0)
+
+def maxav(trial):
+    """Mean absolute value (MAV)."""
+    return np.max(np.abs(trial), axis=0)
+
+def rms(trial):
     """Root mean square (RMS)."""
     return np.sqrt(np.mean(trial**2, axis=0))
 
-def waveform_length(trial):
+def wl(trial):
     """Waveform length (WL)."""
     return np.sum(np.abs(np.diff(trial, axis=0)), axis=0)
 
-
-def slope_sign_changes(trial, threshold=0.01):
+def ssc(trial, threshold=0.01):
     """Slope sign changes (SSC)."""
-    diff1 = np.diff(trial, axis=0)[:-1]
-    diff2 = np.diff(trial, axis=0)[1:]
-    return np.sum((diff1 * diff2 < 0) & (np.abs(diff1) > threshold), axis=0)
+    diff1 = np.diff(trial, axis=0)[:-1, :]
+    diff2 = np.diff(trial, axis=0)[1:, :]
+    # return np.sum((diff1 * diff2 < 0) & (np.abs(diff1) > threshold), axis=0)
+    return np.sum((diff1 * diff2 < 0), axis=0)
 
-def variance(trial):
-    """Variance of the signal."""
-    return np.var(trial, axis=0)
-
-def mean_frequency(trial):
+def mf(trial):
     """Mean frequency (MF)."""
     freq = np.fft.rfft(trial, axis=0)  # Perform FFT per channel
     power = np.abs(freq) ** 2
     freqs = np.fft.rfftfreq(trial.shape[0])
     return np.sum(freqs[:, None] * power, axis=0) / np.sum(power, axis=0)
-
-def maximum_amplitude(trial):
-    """Maximum amplitude (MAX)."""
-    return np.max(trial, axis=0)
 
 def build_dataset_from_ninapro(processed_emg, features=None, exclude_list=None):
     """
@@ -442,3 +447,152 @@ def plot_envelopes(emg_envelopes, stimuli_index, repetition_index, number_of_emg
         ax[channel_idx].set_title(f"Channel {channel_idx+1}")
     plt.suptitle("Envelopes of the EMG signal")
 
+# CLASSIFICATION
+def grid_search_RF(X_train_z, X_test_z, y_train, y_test, param_grid, cv=6, split=0.3):
+
+    # cross validation 7 because we only use 70%, i.e. 7 trials, for training
+    grid_search = GridSearchCV(estimator=RandomForestClassifier(random_state=42, class_weight='balanced'), param_grid=param_grid, cv=cv, scoring='accuracy')
+    grid_search.fit(X_train_z, y_train)
+
+    # results
+    results = pd.DataFrame(grid_search.cv_results_)
+
+    # best model and its parameters
+    best_model = grid_search.best_estimator_ 
+    best_params = grid_search.best_params_
+    best_score = grid_search.best_score_
+
+    # evaluate the model on unseen data
+    y_pred = best_model.predict(X_test_z)
+    accuracy = accuracy_score(y_test, y_pred)
+    F1 = f1_score(y_test, y_pred, average='weighted')
+
+    # Create a confusion matrix to visualize the performance of the classification model.
+    # The confusion matrix shows the true vs predicted labels.
+    confmat = confusion_matrix(y_test, y_pred, normalize="true")
+
+    fig, ax = plt.subplots()
+    sns.heatmap(confmat, annot=True, ax=ax)
+    ax.set_ylabel("True label")
+    ax.set_xlabel("Predicted label")
+    plt.show()
+
+    # print(f'Results of the gridsearch: ', results)
+    print(f'''Accuracy: {accuracy*100:.2f}%, F1-score: {F1:.2f}
+          - n_estimators      : {best_params['n_estimators']}
+          - max_depth         : {best_params['max_depth']}
+          - min_samples_split : {best_params['min_samples_split']}
+          - min_samples_leaf  : {best_params['min_samples_leaf']}
+        ''')
+          
+    return (best_model, best_params, best_score, accuracy, F1, results)
+
+def plot_paramgrid(results, best_score, best_params, param_grid):
+    fig, axs = plt.subplots(2, 3, figsize=(45, 15))
+    ############################################################################
+    # n_estimators ifo max_depth
+    ax1 = fig.add_subplot(2, 3, (1, 4))
+    for i in param_grid['max_depth']:
+        x_depth = results[results['param_max_depth'] == i]
+
+        mean_scores = x_depth.groupby('param_n_estimators')['mean_test_score'].mean()
+        std_scores = x_depth.groupby('param_n_estimators')['mean_test_score'].std()
+
+        ax1.plot(mean_scores.index, mean_scores, label=f'Depth = {i}', marker='o')
+        ax1.fill_between(mean_scores.index, mean_scores - std_scores, mean_scores + std_scores, alpha=0.2)
+
+    # Highlight the best parameter value
+    best_param_value = best_params['n_estimators']
+    ax1.scatter([best_param_value], [best_score], color='red', label='Best Parameter', zorder=10, marker='*', s=100)
+
+    ax1.set_title("Accuracy vs n_estimators", fontsize=14)
+    ax1.set_xlabel('n_estimators', fontsize=12)
+    ax1.set_ylabel("Accuracy", fontsize=12)
+    ax1.set_xticks(mean_scores.index)
+    ax1.grid(True, linestyle="--", alpha=0.7)
+    ax1.legend(loc='lower right')
+    ############################################################################
+    # n_estimators ifo min_samples_split 
+    for i in param_grid['min_samples_split']:
+        x_depth = results[results['param_min_samples_split'] == i]
+
+        mean_scores = x_depth.groupby('param_n_estimators')['mean_test_score'].mean()
+        std_scores = x_depth.groupby('param_n_estimators')['mean_test_score'].std()
+
+        axs[0,1].plot(mean_scores.index, mean_scores, label=f'Samples_split = {i}', marker='o')
+        axs[0,1].fill_between(mean_scores.index, mean_scores - std_scores, mean_scores + std_scores, alpha=0.2)
+
+    # Highlight the best parameter value
+    best_param_value = best_params['n_estimators']
+    axs[0,1].scatter([best_param_value], [best_score], color='red', label='Best Parameter', zorder=10, marker='*', s=100)
+
+    axs[0,1].set_title("Accuracy vs n_estimators", fontsize=14)
+    axs[0,1].set_xlabel('n_estimators', fontsize=12)
+    axs[0,1].set_ylabel("Accuracy", fontsize=12)
+    axs[0,1].set_xticks(mean_scores.index)
+    axs[0,1].grid(True, linestyle="--", alpha=0.7)
+    axs[0,1].legend(loc='lower right')
+    ############################################################################
+    # n_estimators ifo min_samples_leaf 
+    for i in param_grid['min_samples_leaf']:
+        x_depth = results[results['param_min_samples_leaf'] == i]
+
+        mean_scores = x_depth.groupby('param_n_estimators')['mean_test_score'].mean()
+        std_scores = x_depth.groupby('param_n_estimators')['mean_test_score'].std()
+
+        axs[0,2].plot(mean_scores.index, mean_scores, label=f'Samples_leaf = {i}', marker='o')
+        axs[0,2].fill_between(mean_scores.index, mean_scores - std_scores, mean_scores + std_scores, alpha=0.2)
+
+    # Highlight the best parameter value
+    best_param_value = best_params['n_estimators']
+    axs[0,2].scatter([best_param_value], [best_score], color='red', label='Best Parameter', zorder=10, marker='*', s=100)
+
+    axs[0,2].set_title("Accuracy vs n_estimators", fontsize=14)
+    axs[0,2].set_xlabel('n_estimators', fontsize=12)
+    axs[0,2].set_ylabel("Accuracy", fontsize=12)
+    axs[0,2].set_xticks(mean_scores.index)
+    axs[0,2].grid(True, linestyle="--", alpha=0.7)
+    axs[0,2].legend(loc='lower right')
+    ############################################################################
+    # max_depth ifo min_samples_split 
+    for i in param_grid['min_samples_split']:
+        x_depth = results[results['param_min_samples_split'] == i]
+
+        mean_scores = x_depth.groupby('param_max_depth')['mean_test_score'].mean()
+        std_scores = x_depth.groupby('param_max_depth')['mean_test_score'].std()
+
+        axs[1,1].plot(mean_scores.index, mean_scores, label=f'Samples_split = {i}', marker='o')
+        axs[1,1].fill_between(mean_scores.index, mean_scores - std_scores, mean_scores + std_scores, alpha=0.2)
+
+    # Highlight the best parameter value
+    best_param_value = best_params['max_depth']
+    axs[1,1].scatter([best_param_value], [best_score], color='red', label='Best Parameter', zorder=10, marker='*', s=100)
+
+    axs[1,1].set_title("Accuracy vs max_depth", fontsize=14)
+    axs[1,1].set_xlabel('max_depth', fontsize=12)
+    axs[1,1].set_ylabel("Accuracy", fontsize=12)
+    axs[1,1].set_xticks(mean_scores.index)
+    axs[1,1].grid(True, linestyle="--", alpha=0.7)
+    axs[1,1].legend(loc='lower right')
+    ############################################################################
+    # max_depth ifo min_samples_leaf 
+    for i in param_grid['min_samples_leaf']:
+        x_depth = results[results['param_min_samples_leaf'] == i]
+
+        mean_scores = x_depth.groupby('param_max_depth')['mean_test_score'].mean()
+        std_scores = x_depth.groupby('param_max_depth')['mean_test_score'].std()
+
+        axs[1,2].plot(mean_scores.index, mean_scores, label=f'Samples_leaf = {i}', marker='o')
+        axs[1,2].fill_between(mean_scores.index, mean_scores - std_scores, mean_scores + std_scores, alpha=0.2)
+
+    # Highlight the best parameter value
+    best_param_value = best_params['max_depth']
+    axs[1,2].scatter([best_param_value], [best_score], color='red', label='Best Parameter', zorder=10, marker='*', s=100)
+
+    axs[1,2].set_title("Accuracy vs max_depth", fontsize=14)
+    axs[1,2].set_xlabel('max_depth', fontsize=12)
+    axs[1,2].set_ylabel("Accuracy", fontsize=12)
+    axs[1,2].set_xticks(mean_scores.index)
+    axs[1,2].grid(True, linestyle="--", alpha=0.7)
+    axs[1,2].legend(loc='lower right')
+    plt.show()
