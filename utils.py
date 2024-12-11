@@ -13,9 +13,6 @@ import matplotlib.pyplot as plt
 
 from scipy.spatial.distance import euclidean
 import numpy as np
-
-np.random.seed(42)
-
 import plotly.express as px
 
 from sklearn.ensemble import RandomForestClassifier
@@ -23,6 +20,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import GridSearchCV
+
+np.random.seed(42)
 
 def emg_envelope(emg_rectified, stimulus, repetition, window_size = 25, n_channels = 10, n_stimuli = 12, n_repetitions = 10):
 
@@ -54,8 +53,6 @@ def compute_emg_average_activations(emg_envelopes, n_channels = 10, n_stimuli = 
             #mean across time for each channel
             emg_average_activations[:, stimuli_idx, repetition_idx] = np.mean(emg_envelopes[stimuli_idx][repetition_idx], axis=0) 
     return emg_average_activations
-
-
 
 def trial_to_exclude_outdated(emg_average_activations, stimuli_idx, threshold_factor=1.5, use_iqr=True):
     """
@@ -102,6 +99,7 @@ def trial_to_exclude_outdated(emg_average_activations, stimuli_idx, threshold_fa
         trials_to_exclude = np.where(distances > threshold)[0]
 
     return trials_to_exclude
+
 def trial_to_exclude_all_oudated(emg_average_activations, print_list = True):
     """
     Apply the exclusion method (IQR or MAD) to all stimuli.
@@ -124,9 +122,6 @@ def trial_to_exclude_all_oudated(emg_average_activations, print_list = True):
             print(f"Trials to exclude for Stimulus {stimuli_idx + 1}: {trials_to_exclude + 1}")  # 1-based indexing
 
     return exclude_list
-
-
-
 
 def trial_to_exclude(emg_envelopes, stimuli_idx, fs, window_ms=2000, n_repetitions = 10):
     """
@@ -208,10 +203,6 @@ def trial_to_exclude_all(emg_envelopes, fs = 100, window_ms=2000, print_list=Tru
             print(f"Trials to exclude for Stimulus {stimuli_idx + 1}: {trials_one_based}")
 
     return exclude_list
-
-
-
-
 
 def plot_heatmap(emg_average_activations, n_stimuli = 12):
     fig, ax = plt.subplots(6,2, figsize=(30, 25), constrained_layout=True, sharex=True, sharey=True)
@@ -372,7 +363,7 @@ def plot_features_by_stimulus_and_metric(dataset, labels, n_stimuli, n_repetitio
         plt.suptitle(f"Features for Stimulus {stimuli_idx + 1}", fontsize=16)
         plt.show()
 
-def plot_feature_subjects(dataset, labels, subject_ids, n_stimuli, n_channels, feature_names):
+def plot_feature_subjects(dataset, n_stimuli, n_channels, feature_names):
     """
     Plot the mean feature value per channel for each stimulus, comparing different subjects.
     The plots will be arranged in columns of 3.
@@ -388,8 +379,9 @@ def plot_feature_subjects(dataset, labels, subject_ids, n_stimuli, n_channels, f
     n_features = dataset.shape[1] // n_channels  # Number of features per channel
 
     # Reshape dataset to (n_samples, n_features, n_channels)
-    reshaped_dataset = dataset.reshape(-1, n_features, n_channels)
-
+    reshaped_dataset = np.array(dataset.iloc[:,2:]).reshape(-1, n_features, n_channels)
+    labels = np.array(dataset.iloc[:,1])
+    subject_ids = np.array(dataset.iloc[:,0])
     # Iterate through each stimulus
     for stimuli_idx in range(n_stimuli):
         # Select data for the current stimulus
@@ -445,10 +437,10 @@ def plot_envelopes(emg_envelopes, stimuli_index, repetition_index, number_of_emg
     for channel_idx in range(number_of_emg_channels): 
         ax[channel_idx].plot(emg_envelopes[stimuli_index][repetition_index][:, channel_idx]) #here if you change the indexes of emg_envelop you can go over the signal for a specific repetition and stimuli 
         ax[channel_idx].set_title(f"Channel {channel_idx+1}")
-    plt.suptitle("Envelopes of the EMG signal")
+    plt.suptitle(f"Envelopes of the EMG signal:\n - stimulus {stimuli_index+1}\n - repetition {repetition_index+1}")
 
 # CLASSIFICATION
-def grid_search_RF(X_train_z, X_test_z, y_train, y_test, param_grid, cv=6, split=0.3):
+def grid_search_RF(X_train_z, X_test_z, y_train, y_test, param_grid, cv, split=0.3):
 
     # cross validation 7 because we only use 70%, i.e. 7 trials, for training
     grid_search = GridSearchCV(estimator=RandomForestClassifier(random_state=42, class_weight='balanced'), param_grid=param_grid, cv=cv, scoring='accuracy')
