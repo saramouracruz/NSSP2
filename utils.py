@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import os
 sns.set() #sets the matplotlib style to seaborn style
 
 from scipy.io import loadmat 
@@ -17,12 +18,14 @@ import plotly.express as px
 
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, mean_squared_error, mean_absolute_error
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import GridSearchCV
+from sklearn.linear_model import LinearRegression
 
 np.random.seed(42)
 
+# PROCESSING & FEATURE EXTRACTION
 def emg_envelope(emg_rectified, stimulus, repetition, window_size = 25, n_channels = 10, n_stimuli = 12, n_repetitions = 10):
 
     #defining the length of the moving average window
@@ -123,7 +126,7 @@ def trial_to_exclude_all_oudated(emg_average_activations, print_list = True):
 
     return exclude_list
 
-def trial_to_exclude(emg_envelopes, stimuli_idx, fs, window_ms=2000, n_repetitions = 10):
+def trial_to_exclude(emg_envelopes, stimuli_idx, fs, window_ms=3000, n_repetitions = 10):
     """
     Identify trials where any channel's signal is constant or contains zeros
     over a specified time window in `emg_envelopes`.
@@ -175,7 +178,7 @@ def trial_to_exclude(emg_envelopes, stimuli_idx, fs, window_ms=2000, n_repetitio
     # Remove duplicates and return sorted list of trials
     return sorted(set(trials_to_exclude))
 
-def trial_to_exclude_all(emg_envelopes, fs = 100, window_ms=2000, print_list=True):
+def trial_to_exclude_all(emg_envelopes, fs = 100, window_ms=3000, print_list=True):
     """
     Identify trials to exclude for all stimuli based on the `trial_to_exclude` method.
 
@@ -440,10 +443,12 @@ def plot_envelopes(emg_envelopes, stimuli_index, repetition_index, number_of_emg
     plt.suptitle(f"Envelopes of the EMG signal:\n - stimulus {stimuli_index+1}\n - repetition {repetition_index+1}")
 
 # CLASSIFICATION
-def grid_search_RF(X_train_z, X_test_z, y_train, y_test, param_grid, cv, split=0.3):
+def grid_search_RF(X_train_z, X_test_z, y_train, y_test, param_grid, cv):
 
     # cross validation 7 because we only use 70%, i.e. 7 trials, for training
     grid_search = GridSearchCV(estimator=RandomForestClassifier(random_state=42, class_weight='balanced'), param_grid=param_grid, cv=cv, scoring='accuracy')
+    # grid_search = GridSearchCV(estimator=RandomForestClassifier(random_state=42), param_grid=param_grid, cv=cv)
+
     grid_search.fit(X_train_z, y_train)
 
     # results
@@ -588,3 +593,168 @@ def plot_paramgrid(results, best_score, best_params, param_grid):
     axs[1,2].grid(True, linestyle="--", alpha=0.7)
     axs[1,2].legend(loc='lower right')
     plt.show()
+
+## PART 3
+def extract_time_windows_regression(EMG: np.ndarray, Label: np.ndarray, fs: int, win_len: int, step: int):
+# This function is used to cut the time windows from the raw EMG 
+# It return a lists containing the EMG of each time window.
+# It also returns the target corresponding to the time of the end of the window
+    """
+    This function is defined to perform an overlapping sliding window 
+    :param EMG: Numpy array containing the data
+    :param Label: Numpy array containing the targets
+    :param fs: the sampling frequency of the signal
+    :param win_len: The size of the windows (in seconds)
+    :param step: The step size between windows (in seconds)
+
+    :return: A Numpy array containing the windows
+    :return: A Numpy array containing the targets aligned for each window
+    :note: The lengths of both outputs are the same
+    """
+    
+    n,m = EMG.shape
+    win_len = int(win_len*fs)
+    start_points = np.arange(0,n-win_len,int(step*fs))
+    end_points = start_points + win_len
+
+    EMG_windows = np.zeros((len(start_points),win_len,m))
+    Labels_window = np.zeros((len(start_points),win_len,Label.shape[1]))
+    for i in range(len(start_points)):
+        EMG_windows[i,:,:] = EMG[start_points[i]:end_points[i],:]
+        Labels_window[i,:,:] = Label[start_points[i]:end_points[i],:]
+    
+
+    return EMG_windows, Labels_window
+
+def extract_features(EMG_windows: np.ndarray, Labels_windows: np.ndarray):
+    """
+    Extract features from EMG signal windows and label windows.
+    
+    Features include:
+    - Mean
+    - Standard Deviation
+    - Maximum Amplitude
+    - Waveform Length (WL)
+    - Variance
+    
+    :param EMG_windows: A Numpy array containing the EMG windows.
+    :param Labels_windows: A Numpy array containing the corresponding label windows.
+    :return: 
+        EMG_extracted_features: A Numpy array containing the extracted features for each window.
+        Labels_mean: A Numpy array containing the mean of the labels window.
+    """
+    # Time-domain features
+    EMG_mean = np.mean(EMG_windows, axis=1)
+    EMG_std = np.std(EMG_windows, axis=1)
+    EMG_max_amplitude = np.max(EMG_windows, axis=1)
+    EMG_wl = np.sum(np.abs(np.diff(EMG_windows, axis=1)), axis=1)
+    EMG_variance = np.var(EMG_windows, axis=1)
+    
+    
+    # Label mean
+    Labels_mean = np.mean(Labels_windows, axis=1)
+    
+    # Concatenate all features
+    EMG_extracted_features = np.concatenate((
+        EMG_mean, 
+        EMG_std, 
+        EMG_max_amplitude, 
+        EMG_wl, 
+        EMG_variance
+    ), axis=1)
+
+    # Normalize features (Min-Max Normalization)
+    EMG_extracted_features_min = np.min(EMG_extracted_features, axis=0)
+    EMG_extracted_features_max = np.max(EMG_extracted_features, axis=0)
+    EMG_extracted_features_normalized = (EMG_extracted_features - EMG_extracted_features_min) / \
+                                         (EMG_extracted_features_max - EMG_extracted_features_min + 1e-8)  # Avoid division by zero
+    
+    return EMG_extracted_features_normalized, Labels_mean
+
+def plot_features(features, feature_names, title_prefix, n_rows=5, n_cols=10):
+    """
+    Plot features for each channel in a grid layout (7x10).
+    
+    :param features: Numpy array of features to plot.
+    :param title_prefix: Prefix for subplot titles.
+    :param n_rows: Number of rows in the grid.
+    :param n_cols: Number of columns in the grid.
+    """
+    num_features = features.shape[1]
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 14))
+    fig.suptitle(f"{title_prefix} Features Visualization", fontsize=16, y=0.95)
+    
+    for i in range(n_rows * n_cols):
+        row, col = divmod(i, n_cols)
+        ax = axes[row, col]
+        
+        if i < num_features:
+            ax.plot(features[:, i])
+            ax.set_title(f"Channel {i % 10 + 1}, {feature_names[int(i/10)]}", fontsize=8)
+        else:
+            ax.axis("off")  # Turn off unused subplots
+            
+        ax.tick_params(axis='both', which='major', labelsize=6)
+    
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.9)  # Adjust spacing for the title
+    plt.show()
+
+def plot_joint_predictions(true_values, predictions, joint_indices, joint_names):
+    """
+    Plot the true vs predicted values for each joint.
+    :param true_values: Array of ground truth values (shape: [samples, joints]).
+    :param predictions: Array of predicted values (shape: [samples, joints]).
+    :param joint_indices: List of indices corresponding to the joints.
+    :param joint_names: List of joint names for labels.
+    """
+    plt.figure(figsize=(15, len(joint_indices) * 3))
+    
+    for i, joint_idx in enumerate(joint_indices):
+        plt.subplot(len(joint_indices), 1, i + 1)
+        plt.plot(true_values[:300, joint_idx], label="True", color="blue")
+        plt.plot(predictions[:300, joint_idx], label="Predicted", linestyle="--", color="orange")
+        plt.title(f"Joint {joint_names[i]}: True vs Predicted")
+        plt.xlabel("Time (samples)")
+        plt.ylabel("Joint Angle")
+        plt.legend()
+        plt.grid()
+    
+    plt.tight_layout()
+    plt.show()
+
+def plot_joint_predictions_with_error(true_values, predictions, joint_indices, joint_names):
+    """
+    Plot the true vs predicted values and their differences (errors) for each joint.
+    :param true_values: Array of ground truth values (shape: [samples, joints]).
+    :param predictions: Array of predicted values (shape: [samples, joints]).
+    :param joint_indices: List of indices corresponding to the joints.
+    :param joint_names: List of joint names for labels.
+    """
+    plt.figure(figsize=(15, len(joint_indices) * 6))  # Adjusting the height for two subplots per joint
+
+    for i, joint_idx in enumerate(joint_indices):
+        # True vs Predicted
+        plt.subplot(len(joint_indices), 2, i * 2 + 1)
+        plt.plot(true_values[:300, joint_idx], label="True", color="blue")
+        plt.plot(predictions[:300, joint_idx], label="Predicted", linestyle="--", color="orange")
+        plt.title(f"Joint {joint_names[i]}: True vs Predicted")
+        plt.xlabel("Time (samples)")
+        plt.ylabel("Joint Angle")
+        plt.legend()
+        plt.grid()
+
+        # Difference (Error)
+        plt.subplot(len(joint_indices), 2, i * 2 + 2)
+        error = true_values[:300, joint_idx] - predictions[:300, joint_idx]
+        plt.plot(error, label="Error (True - Predicted)", color="red")
+        plt.title(f"Joint {joint_names[i]}: Error")
+        plt.xlabel("Time (samples)")
+        plt.ylabel("Error")
+        plt.axhline(0, color="black", linestyle="--", linewidth=0.8)  # Reference line at 0
+        plt.legend()
+        plt.grid()
+
+    plt.tight_layout()
+    plt.show()
+
