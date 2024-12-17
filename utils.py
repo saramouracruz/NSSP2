@@ -445,10 +445,9 @@ def plot_envelopes(emg_envelopes, stimuli_index, repetition_index, number_of_emg
 # CLASSIFICATION
 def grid_search_RF(X_train_z, X_test_z, y_train, y_test, param_grid, cv):
 
-    # cross validation 7 because we only use 70%, i.e. 7 trials, for training
-    grid_search = GridSearchCV(estimator=RandomForestClassifier(random_state=42, class_weight='balanced'), param_grid=param_grid, cv=cv, scoring='accuracy')
-    # grid_search = GridSearchCV(estimator=RandomForestClassifier(random_state=42), param_grid=param_grid, cv=cv)
-
+    # cross validation 6
+    grid_search = GridSearchCV(estimator=RandomForestClassifier(random_state=42, class_weight='balanced')
+                               , param_grid=param_grid, cv=cv, scoring='accuracy')
     grid_search.fit(X_train_z, y_train)
 
     # results
@@ -480,6 +479,8 @@ def grid_search_RF(X_train_z, X_test_z, y_train, y_test, param_grid, cv):
           - max_depth         : {best_params['max_depth']}
           - min_samples_split : {best_params['min_samples_split']}
           - min_samples_leaf  : {best_params['min_samples_leaf']}
+          - max_features  : {best_params['max_features']}
+          - bootstrap  : {best_params['bootstrap']}
         ''')
           
     return (best_model, best_params, best_score, accuracy, F1, results)
