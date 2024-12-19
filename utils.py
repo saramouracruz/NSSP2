@@ -1,3 +1,5 @@
+# ---------------------------------------------- Libraries import -------------------------------------------------------------------------
+
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -25,7 +27,9 @@ from sklearn.linear_model import LinearRegression
 
 np.random.seed(42)
 
-# PROCESSING & FEATURE EXTRACTION
+
+# ----------------------------------------------------------- PRE-PROCESSING  -------------------------------------------------------------------------
+
 def emg_envelope(emg_rectified, stimulus, repetition, window_size = 25, n_channels = 10, n_stimuli = 12, n_repetitions = 10):
 
     #defining the length of the moving average window
@@ -45,9 +49,6 @@ def emg_envelope(emg_rectified, stimulus, repetition, window_size = 25, n_channe
 
     return emg_envelopes
 
-#emg_average_activations has data for emg_average_activations[:, stimuli_idx, repetition_idx] 
-#create a function that analysis each stimuli individually and returns repetition index of an trial where the signal is significantly diffrent from other trials 
-#first approach see how differnet the mean signal is 
 
 def compute_emg_average_activations(emg_envelopes, n_channels = 10, n_stimuli = 12, n_repetitions = 10):
     emg_average_activations = np.zeros((n_channels, n_stimuli, n_repetitions))
@@ -57,76 +58,9 @@ def compute_emg_average_activations(emg_envelopes, n_channels = 10, n_stimuli = 
             emg_average_activations[:, stimuli_idx, repetition_idx] = np.mean(emg_envelopes[stimuli_idx][repetition_idx], axis=0) 
     return emg_average_activations
 
-def trial_to_exclude_outdated(emg_average_activations, stimuli_idx, threshold_factor=1.5, use_iqr=True):
-    """
-    Identify trials where the channel distribution deviates significantly from others,
-    using either IQR or MAD for outlier detection.
 
-    Args:
-        emg_average_activations (np.ndarray): 3D array (n_channels, n_stimuli, n_repetitions).
-        stimuli_idx (int): Index of the stimulus to analyze (0-based).
-        threshold_factor (float): Multiplier for the threshold (default: 1.5).
-        use_iqr (bool): Whether to use IQR (True) or MAD (False) for outlier detection.
 
-    Returns:
-        list: Indices of trials to exclude for the specified stimulus.
-    """
-    # Extract data for the given stimulus (shape: n_channels x n_repetitions)
-    data_from_stimuli = emg_average_activations[:, stimuli_idx, :]
-    
-    # Compute the median pattern across repetitions
-    median_pattern = np.median(data_from_stimuli, axis=1)  # Shape: (n_channels,)
-
-    # Compute distances of each trial's pattern from the median pattern
-    distances = np.array([euclidean(data_from_stimuli[:, r], median_pattern)
-                          for r in range(data_from_stimuli.shape[1])])
-
-    if use_iqr:
-        # IQR-based outlier detection
-        Q1 = np.percentile(distances, 25)  # First quartile
-        Q3 = np.percentile(distances, 75)  # Third quartile
-        IQR = Q3 - Q1
-
-        # Define the threshold for outliers
-        lower_bound = Q1 - threshold_factor * IQR
-        upper_bound = Q3 + threshold_factor * IQR
-
-        # Identify trials that fall outside the bounds
-        trials_to_exclude = np.where((distances < lower_bound) | (distances > upper_bound))[0]
-    else:
-        # MAD-based outlier detection
-        mad_distance = np.median(np.abs(distances - np.median(distances)))
-        threshold = np.median(distances) + threshold_factor * mad_distance
-
-        # Identify trials exceeding the threshold
-        trials_to_exclude = np.where(distances > threshold)[0]
-
-    return trials_to_exclude
-
-def trial_to_exclude_all_oudated(emg_average_activations, print_list = True):
-    """
-    Apply the exclusion method (IQR or MAD) to all stimuli.
-
-    Args:
-        emg_average_activations (np.ndarray): 3D array (n_channels, n_stimuli, n_repetitions).
-        threshold_factor (float): Multiplier for the threshold (default: 1.5).
-        use_iqr (bool): Whether to use IQR (True) or MAD (False) for outlier detection.
-
-    Returns:
-        list: A list where each element contains the indices of excluded trials for each stimulus.
-    """
-    n_stimuli = emg_average_activations.shape[1]
-    exclude_list = []
-
-    for stimuli_idx in range(n_stimuli):
-        trials_to_exclude = trial_to_exclude(emg_average_activations, stimuli_idx, fs = 100)
-        exclude_list.append(trials_to_exclude)
-        if print_list:
-            print(f"Trials to exclude for Stimulus {stimuli_idx + 1}: {trials_to_exclude + 1}")  # 1-based indexing
-
-    return exclude_list
-
-def trial_to_exclude(emg_envelopes, stimuli_idx, fs, window_ms=3000, n_repetitions = 10):
+def trial_to_exclude(emg_envelopes, stimuli_idx, fs, window_ms=3000, warnings = False, n_repetitions = 10):
     """
     Identify trials where any channel's signal is constant or contains zeros
     over a specified time window in `emg_envelopes`.
@@ -161,7 +95,8 @@ def trial_to_exclude(emg_envelopes, stimuli_idx, fs, window_ms=3000, n_repetitio
             # Check for zeros
             if np.all(channel_signal == 0):
                 trials_to_exclude.append(repetition_idx)
-                print('all channel is 0')
+                if warnings:
+                    print('Channel is purely 0')
                 break  # No need to check other conditions for this trial
 
             # Check for constant values within a sliding window
@@ -169,7 +104,8 @@ def trial_to_exclude(emg_envelopes, stimuli_idx, fs, window_ms=3000, n_repetitio
                 window = channel_signal[start:start + window_size]
                 if np.all(window == window[0]):  # All values in the window are identical
                     trials_to_exclude.append(repetition_idx)
-                    print(f'all values in the window are identical for channel {channel_idx+1}')
+                    if warnings:
+                        print(f'Channel {channel_idx+1} is saturated.')
                     break
             else:
                 continue
@@ -178,7 +114,7 @@ def trial_to_exclude(emg_envelopes, stimuli_idx, fs, window_ms=3000, n_repetitio
     # Remove duplicates and return sorted list of trials
     return sorted(set(trials_to_exclude))
 
-def trial_to_exclude_all(emg_envelopes, fs = 100, window_ms=3000, print_list=True):
+def trial_to_exclude_all(emg_envelopes, fs = 100, window_ms=3000, print_list=True, warnings = False):
     """
     Identify trials to exclude for all stimuli based on the `trial_to_exclude` method.
 
@@ -194,10 +130,11 @@ def trial_to_exclude_all(emg_envelopes, fs = 100, window_ms=3000, print_list=Tru
     """
     n_stimuli = len(emg_envelopes)  # Number of stimuli
     exclude_list = []
+    flag = warnings
 
     for stimuli_idx in range(n_stimuli):
         # Use trial_to_exclude for each stimulus
-        trials_to_exclude = trial_to_exclude(emg_envelopes, stimuli_idx, fs, window_ms)
+        trials_to_exclude = trial_to_exclude(emg_envelopes, stimuli_idx, fs, window_ms, warnings = flag)
         exclude_list.append(trials_to_exclude)
 
         if print_list:
@@ -217,7 +154,16 @@ def plot_heatmap(emg_average_activations, n_stimuli = 12):
         ax[stimuli_idx].set_xlabel("Repetition")
         ax[stimuli_idx].set_ylabel("EMG channel")
 
-# features
+# plot Envelopes of the EMG signal
+def plot_envelopes(emg_envelopes, stimuli_index, repetition_index, number_of_emg_channels = 10):
+    fig, ax = plt.subplots(2, 5, figsize=(12, 6), constrained_layout=True, sharex=True, sharey=True)
+    ax = ax.ravel()
+    for channel_idx in range(number_of_emg_channels): 
+        ax[channel_idx].plot(emg_envelopes[stimuli_index][repetition_index][:, channel_idx]) #here if you change the indexes of emg_envelop you can go over the signal for a specific repetition and stimuli 
+        ax[channel_idx].set_title(f"Channel {channel_idx+1}")
+    plt.suptitle(f"Envelopes of the EMG signal:\n - stimulus {stimuli_index+1}\n - repetition {repetition_index+1}")
+
+ #--------------------------------------------------------- FEATURE EXTRACTION --------------------------------------------------------------------
 def mav(trial):
     """Mean absolute value (MAV)."""
     return np.mean(np.abs(trial), axis=0)
@@ -252,9 +198,12 @@ def mf(trial):
     freqs = np.fft.rfftfreq(trial.shape[0])
     return np.sum(freqs[:, None] * power, axis=0) / np.sum(power, axis=0)
 
+
+ #------------------------------------------------------- BUILD DATASET --------------------------------------------------------------------
+
 def build_dataset_from_ninapro(processed_emg, features=None, exclude_list=None):
     """
-    Builds a dataset for machine learning by processing the pre-processed EMG envelopes.
+    Builds a dataset by processing the pre-processed EMG envelopes.
 
     Parameters:
     - processed_emg: List of lists containing the pre-processed EMG envelopes for each stimulus and repetition.
@@ -267,7 +216,6 @@ def build_dataset_from_ninapro(processed_emg, features=None, exclude_list=None):
     - dataset: 2D array of extracted features.
     - labels: 1D array of labels for each sample.
     """
-    #emg_envelopes[1][5][:, channel_idx]
 
 
     n_stimuli = len(processed_emg)
@@ -302,9 +250,12 @@ def build_dataset_from_ninapro(processed_emg, features=None, exclude_list=None):
 
     return dataset, labels
 
+ #------------------------------------------------------- PLOT SECTION 1.3. --------------------------------------------------------------------
+
+
 def plot_features_by_stimulus_and_metric(dataset, labels, n_stimuli, n_repetitions, n_channels):
     """
-    Visualize all repetitions of a specific metric for each stimulus in a compact layout.
+    Visualize all repetitions of a specific metric for each stimulus.
 
     Parameters:
         dataset: 2D numpy array (n_trials, n_features * n_channels).
@@ -354,7 +305,7 @@ def plot_features_by_stimulus_and_metric(dataset, labels, n_stimuli, n_repetitio
                     alpha=0.7
                 )
 
-            ax.set_title(f"{feature_names[feature_idx]} (Stimulus {stimuli_idx + 1})")
+            ax.set_title(f"{feature_names[feature_idx]}")
             ax.set_ylabel("Feature Value")
             ax.set_xlabel("Channel")
             ax.legend(loc="upper right", fontsize=6)
@@ -366,10 +317,13 @@ def plot_features_by_stimulus_and_metric(dataset, labels, n_stimuli, n_repetitio
         plt.suptitle(f"Features for Stimulus {stimuli_idx + 1}", fontsize=16)
         plt.show()
 
-def plot_feature_subjects(dataset, n_stimuli, n_channels, feature_names):
+
+ #------------------------------------------------------- PLOT SECTION 2.2 --------------------------------------------------------------------
+
+
+def plot_feature_subjects(dataset, n_stimuli, n_channels):
     """
     Plot the mean feature value per channel for each stimulus, comparing different subjects.
-    The plots will be arranged in columns of 3.
     
     Args:
         dataset: 2D numpy array (n_samples, n_features * n_channels).
@@ -379,6 +333,12 @@ def plot_feature_subjects(dataset, n_stimuli, n_channels, feature_names):
         n_channels: Number of EMG channels.
         feature_names: List of feature names corresponding to the features in the dataset.
     """
+
+    feature_names = [
+        "Mean Absolute Value", "Root Mean Square", "Waveform Length",
+        "Slope Sign Changes", "Variance", "Mean Frequency", "Maximum Amplitude"
+    ]
+
     n_features = dataset.shape[1] // n_channels  # Number of features per channel
 
     # Reshape dataset to (n_samples, n_features, n_channels)
@@ -413,12 +373,13 @@ def plot_feature_subjects(dataset, n_stimuli, n_channels, feature_names):
                     ax.plot(
                         range(1, n_channels + 1),  # Channel indices
                         mean_per_channel,
-                        label=f"Subject {subject_id}",
+                        label=f"Subject {int(subject_id)}",
                         alpha=0.7,
                     )
 
             # Configure the plot
-            ax.set_title(f"{feature_name} (Stimulus {stimuli_idx + 1})")
+            #ax.set_title(f"{feature_name} (Stimulus {stimuli_idx + 1})")
+            ax.set_title(f"{feature_name}")
             ax.set_xlabel("Channel")
             ax.set_ylabel("Mean Feature Value")
             ax.set_xticks(range(1, n_channels + 1))
@@ -430,19 +391,12 @@ def plot_feature_subjects(dataset, n_stimuli, n_channels, feature_names):
             fig.delaxes(axes[idx])
 
         # Show the plot
-        plt.tight_layout()
+        #plt.tight_layout()
+        plt.suptitle(f"Features for Stimulus {stimuli_idx + 1}", fontsize=16)
         plt.show()
 
-# plot Envelopes of the EMG signal
-def plot_envelopes(emg_envelopes, stimuli_index, repetition_index, number_of_emg_channels = 10):
-    fig, ax = plt.subplots(2, 5, figsize=(12, 6), constrained_layout=True, sharex=True, sharey=True)
-    ax = ax.ravel()
-    for channel_idx in range(number_of_emg_channels): 
-        ax[channel_idx].plot(emg_envelopes[stimuli_index][repetition_index][:, channel_idx]) #here if you change the indexes of emg_envelop you can go over the signal for a specific repetition and stimuli 
-        ax[channel_idx].set_title(f"Channel {channel_idx+1}")
-    plt.suptitle(f"Envelopes of the EMG signal:\n - stimulus {stimuli_index+1}\n - repetition {repetition_index+1}")
+ #------------------------------------------------------- CLASSIFICATION --------------------------------------------------------------------
 
-# CLASSIFICATION
 def grid_search_RF(X_train_z, X_test_z, y_train, y_test, param_grid, cv):
 
     # cross validation 6
@@ -595,7 +549,8 @@ def plot_paramgrid(results, best_score, best_params, param_grid):
     axs[1,2].legend(loc='lower right')
     plt.show()
 
-## PART 3
+ #------------------------------------------------------- Functions used for Part 3 --------------------------------------------------------------------
+
 def extract_time_windows_regression(EMG: np.ndarray, Label: np.ndarray, fs: int, win_len: int, step: int):
 # This function is used to cut the time windows from the raw EMG 
 # It return a lists containing the EMG of each time window.
@@ -671,6 +626,7 @@ def extract_features(EMG_windows: np.ndarray, Labels_windows: np.ndarray):
                                          (EMG_extracted_features_max - EMG_extracted_features_min + 1e-8)  # Avoid division by zero
     
     return EMG_extracted_features_normalized, Labels_mean
+
 
 def plot_features(features, feature_names, title_prefix, n_rows=5, n_cols=10):
     """
@@ -759,3 +715,79 @@ def plot_joint_predictions_with_error(true_values, predictions, joint_indices, j
     plt.tight_layout()
     plt.show()
 
+
+#---------------------------------------------------------- APPENDIX --------------------------------------------------------------------
+
+# This function was used to test if there were trials that were obiously outliers, having been discarted due to the observation
+# that there was not need given the homogeinity in the data, kept as appendix because was part of our data exploration
+
+
+def trial_to_exclude_outdated(emg_average_activations, stimuli_idx, threshold_factor=1.5, use_iqr=True):
+    """
+    Identify trials where the channel distribution deviates significantly from others,
+    using either IQR or MAD for outlier detection.
+
+    Args:
+        emg_average_activations (np.ndarray): 3D array (n_channels, n_stimuli, n_repetitions).
+        stimuli_idx (int): Index of the stimulus to analyze (0-based).
+        threshold_factor (float): Multiplier for the threshold (default: 1.5).
+        use_iqr (bool): Whether to use IQR (True) or MAD (False) for outlier detection.
+
+    Returns:
+        list: Indices of trials to exclude for the specified stimulus.
+    """
+    # Extract data for the given stimulus (shape: n_channels x n_repetitions)
+    data_from_stimuli = emg_average_activations[:, stimuli_idx, :]
+    
+    # Compute the median pattern across repetitions
+    median_pattern = np.median(data_from_stimuli, axis=1)  # Shape: (n_channels,)
+
+    # Compute distances of each trial's pattern from the median pattern
+    distances = np.array([euclidean(data_from_stimuli[:, r], median_pattern)
+                          for r in range(data_from_stimuli.shape[1])])
+
+    if use_iqr:
+        # IQR-based outlier detection
+        Q1 = np.percentile(distances, 25)  # First quartile
+        Q3 = np.percentile(distances, 75)  # Third quartile
+        IQR = Q3 - Q1
+
+        # Define the threshold for outliers
+        lower_bound = Q1 - threshold_factor * IQR
+        upper_bound = Q3 + threshold_factor * IQR
+
+        # Identify trials that fall outside the bounds
+        trials_to_exclude = np.where((distances < lower_bound) | (distances > upper_bound))[0]
+    else:
+        # MAD-based outlier detection
+        mad_distance = np.median(np.abs(distances - np.median(distances)))
+        threshold = np.median(distances) + threshold_factor * mad_distance
+
+        # Identify trials exceeding the threshold
+        trials_to_exclude = np.where(distances > threshold)[0]
+
+    return trials_to_exclude
+
+
+def trial_to_exclude_all_oudated(emg_average_activations, print_list = True):
+    """
+    Apply the exclusion method (IQR or MAD) to all stimuli.
+
+    Args:
+        emg_average_activations (np.ndarray): 3D array (n_channels, n_stimuli, n_repetitions).
+        threshold_factor (float): Multiplier for the threshold (default: 1.5).
+        use_iqr (bool): Whether to use IQR (True) or MAD (False) for outlier detection.
+
+    Returns:
+        list: A list where each element contains the indices of excluded trials for each stimulus.
+    """
+    n_stimuli = emg_average_activations.shape[1]
+    exclude_list = []
+
+    for stimuli_idx in range(n_stimuli):
+        trials_to_exclude = trial_to_exclude(emg_average_activations, stimuli_idx, fs = 100)
+        exclude_list.append(trials_to_exclude)
+        if print_list:
+            print(f"Trials to exclude for Stimulus {stimuli_idx + 1}: {trials_to_exclude + 1}")  # 1-based indexing
+
+    return exclude_list
